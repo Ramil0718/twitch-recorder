@@ -1,2 +1,11 @@
 Q:why use python 3.10?
-A:
+
+A:because i deployed it in my vps, whose server is "windows server 2012 r2", and the least python dosen't support this old server
+
+Q:why the script automaticly open IE browser but not Chrome or Edge?
+
+A:just as u see, the server only support IE browser, i tried to use Chrome but failed
+
+Q:will u maintain this projection in future?
+
+A:maybe not, because u can see my cpp code level in my page, i just can code some simple projection. if u are interested in it, please contact me
