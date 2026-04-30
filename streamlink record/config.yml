@@ -1,0 +1,51 @@
+rpc:
+  enable: true
+  bind: :8080
+debug: false
+interval: 20
+out_put_path: ./
+ffmpeg_path: ""
+log:
+  out_put_folder: ./
+  save_last_log: true
+  save_every_log: false
+feature:
+  use_native_flv_parser: false
+  remove_symbol_other_character: false
+live_rooms:
+- url: https://www.twitch.tv/spicyuuu
+  is_listening: true
+out_put_tmpl: ""
+video_split_strategies:
+  on_room_name_changed: false
+  max_duration: 0s
+  max_file_size: 0
+cookies:
+  www.twitch.tv: |-
+    auth-token=8ilumemrj6g3pvuz6mnnhkg7rbb1re; domain=.twitch.tv; path=/; secure; httponly
+    server_session_id=68d1d0c803044a9890977bda3b2c6db0; domain=.twitch.tv; path=/; secure; samesite=none
+    unique_id=EEDPozbagXcWfKt6CAHMc7qu1Hu1BPDQ; expires=Sat, 29 May 2027 15:08:26 GMT; domain=.twitch.tv; path=/; secure; samesite=none
+    unique_id_durable=EEDPozbagXcWfKt6CAHMc7qu1Hu1BPDQ; expires=Sat, 29 May 2027 15:08:26 GMT; domain=.twitch.tv; path=/; secure; samesite=none; httponly
+    twitch.lohp.countryCode=US; domain=.twitch.tv; path=/; expires=Mon, 24 May 2027 15:08:26 GMT;
+on_record_finished:
+  convert_to_mp4: true
+  delete_flv_after_convert: true
+  custom_commandline: ""
+  fix_flv_at_first: true
+timeout_in_us: 60000000
+notify:
+  telegram:
+    enable: false
+    withNotification: true
+    botToken: ""
+    chatID: ""
+  email:
+    enable: false
+    smtpHost: smtp.qq.com
+    smtpPort: 465
+    senderEmail: ""
+    senderPassword: ""
+    recipientEmail: ""
+app_data_path: .appdata
+read_only_tool_folder: ""
+tool_root_folder: ""
