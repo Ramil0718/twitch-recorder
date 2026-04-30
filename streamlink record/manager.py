@@ -398,6 +398,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 header{background:#18181b;border-bottom:1px solid #2d2d35;padding:14px 24px;display:flex;align-items:center;gap:10px}
 header h1{font-size:17px;font-weight:700;color:#a970ff}
 header span{font-size:12px;color:#adadb8}
+.lang-toggle{margin-left:auto;background:transparent;border:1px solid #2d2d35;color:#efeff1;border-radius:6px;padding:7px 11px;font-size:12px;font-weight:700;cursor:pointer}
+.lang-toggle:hover{background:#2d2d35}
 .wrap{max-width:900px;margin:0 auto;padding:20px}
 .card{background:#18181b;border:1px solid #2d2d35;border-radius:8px;padding:18px;margin-bottom:14px}
 .card-title{font-size:12px;font-weight:700;color:#adadb8;text-transform:uppercase;letter-spacing:.6px;margin-bottom:14px}
@@ -443,50 +445,186 @@ select option{background:#18181b}
 </head>
 <body>
 <header>
-  <h1>Twitch 直播录制管理</h1>
-  <span>自动检测开播 · 一键录制</span>
+  <h1 id="appTitle">Twitch 直播录制管理</h1>
+  <span id="appSubtitle">自动检测开播 · 一键录制</span>
+  <button class="lang-toggle" id="langBtn" onclick="toggleLang()">English</button>
 </header>
 <div class="wrap">
   <div class="card warning" id="depWarn">未检测到 Streamlink。请在服务器运行 install_deps.cmd，或执行 python -m pip install streamlink。</div>
   <div class="card">
-    <div class="card-title">添加直播间</div>
+    <div class="card-title" id="addTitle">添加直播间</div>
     <div class="row">
       <input class="grow" type="text" id="newUrl" placeholder="https://www.twitch.tv/spicyuuu">
-      <button class="btn btn-purple" onclick="addChannel()">添加</button>
+      <button class="btn btn-purple" id="addBtn" onclick="addChannel()">添加</button>
     </div>
   </div>
   <div class="card">
-    <div class="card-title">频道列表</div>
+    <div class="card-title" id="channelsTitle">频道列表</div>
     <div class="refresh-ts" id="ts">加载中...</div>
-    <div id="list"><div class="empty">暂无频道，请先添加</div></div>
+    <div id="list"><div class="empty" id="emptyText">暂无频道，请先添加</div></div>
   </div>
   <div class="card">
-    <div class="card-title">设置</div>
+    <div class="card-title" id="settingsTitle">设置</div>
     <div class="settings-grid">
       <div>
-        <label>代理地址（可选）</label>
+        <label id="proxyLabel">代理地址（可选）</label>
         <input type="text" id="proxy" placeholder="http://127.0.0.1:7890" style="width:100%">
       </div>
       <div>
-        <label>录制画质</label>
+        <label id="qualityLabel">录制画质</label>
         <select id="quality" style="width:100%">
-          <option value="best">最高 best</option>
+          <option value="best" id="qualityBest">最高 best</option>
           <option value="1080p60">1080p60</option>
           <option value="720p60">720p60</option>
           <option value="720p">720p</option>
           <option value="480p">480p</option>
-          <option value="worst">最低 worst</option>
+          <option value="worst" id="qualityWorst">最低 worst</option>
         </select>
       </div>
     </div>
-    <p class="hint">修改设置后点击保存；正在录制的频道下次重启任务后生效。</p>
-    <div style="margin-top:12px"><button class="btn btn-purple btn-sm" onclick="saveSettings()">保存设置</button></div>
+    <p class="hint" id="settingsHint">修改设置后点击保存；正在录制的频道下次重启任务后生效。</p>
+    <div style="margin-top:12px"><button class="btn btn-purple btn-sm" id="saveBtn" onclick="saveSettings()">保存设置</button></div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
 function $(id) {
   return document.getElementById(id);
+}
+
+var LANG_KEY = 'twitchRecorderLang';
+var lang = 'zh';
+try {
+  lang = window.localStorage && localStorage.getItem(LANG_KEY) || 'zh';
+} catch (e) {
+  lang = 'zh';
+}
+
+var I18N = {
+  zh: {
+    langBtn: 'English',
+    appTitle: 'Twitch 直播录制管理',
+    appSubtitle: '自动检测开播 · 一键录制',
+    depWarn: '未检测到 Streamlink。请在服务器运行 install_deps.cmd，或执行 python -m pip install streamlink。',
+    addTitle: '添加直播间',
+    addBtn: '添加',
+    channelsTitle: '频道列表',
+    loading: '加载中...',
+    empty: '暂无频道，请先添加',
+    settingsTitle: '设置',
+    proxyLabel: '代理地址（可选）',
+    qualityLabel: '录制画质',
+    qualityBest: '最高 best',
+    qualityWorst: '最低 worst',
+    settingsHint: '修改设置后点击保存；正在录制的频道下次重启任务后生效。',
+    saveBtn: '保存设置',
+    loadFailed: '加载失败：',
+    noLogs: '暂无日志',
+    recording: '录制中',
+    listening: '监听中',
+    stopped: '已停止',
+    writing: '正在写入：',
+    waiting: '等待开播',
+    recorderStopped: '录制器已停止',
+    checking: '检测中',
+    check: '检测',
+    start: 'Start',
+    stop: 'Stop',
+    logs: '日志',
+    del: '删除',
+    live: '直播中',
+    offline: '未开播',
+    unknown: '未知',
+    lastRefresh: '上次刷新：',
+    added: '已添加 ',
+    deleteConfirm: '确定删除 ',
+    deleted: '已删除 ',
+    started: '已启动 ',
+    stopping: '正在停止 ',
+    stoppedToast: '已停止 ',
+    settingsSaved: '设置已保存'
+  },
+  en: {
+    langBtn: '中文',
+    appTitle: 'Twitch Recorder Manager',
+    appSubtitle: 'Auto-detect live streams · One-click recording',
+    depWarn: 'Streamlink was not detected. Run install_deps.cmd on the server, or run python -m pip install streamlink.',
+    addTitle: 'Add Channel',
+    addBtn: 'Add',
+    channelsTitle: 'Channel List',
+    loading: 'Loading...',
+    empty: 'No channels yet. Add one first.',
+    settingsTitle: 'Settings',
+    proxyLabel: 'Proxy URL (optional)',
+    qualityLabel: 'Recording Quality',
+    qualityBest: 'Best',
+    qualityWorst: 'Worst',
+    settingsHint: 'Click Save after changing settings. Active recorders use new settings after the next restart.',
+    saveBtn: 'Save Settings',
+    loadFailed: 'Load failed: ',
+    noLogs: 'No logs yet',
+    recording: 'Recording',
+    listening: 'Listening',
+    stopped: 'Stopped',
+    writing: 'Writing: ',
+    waiting: 'Waiting for stream',
+    recorderStopped: 'Recorder stopped',
+    checking: 'Checking',
+    check: 'Check',
+    start: 'Start',
+    stop: 'Stop',
+    logs: 'Logs',
+    del: 'Delete',
+    live: 'Live',
+    offline: 'Offline',
+    unknown: 'Unknown',
+    lastRefresh: 'Last refresh: ',
+    added: 'Added ',
+    deleteConfirm: 'Delete ',
+    deleted: 'Deleted ',
+    started: 'Started ',
+    stopping: 'Stopping ',
+    stoppedToast: 'Stopped ',
+    settingsSaved: 'Settings saved'
+  }
+};
+
+function t(key) {
+  return (I18N[lang] && I18N[lang][key]) || I18N.zh[key] || key;
+}
+
+function setText(id, text) {
+  var el = $(id);
+  if (el) el.innerHTML = text;
+}
+
+function applyLang() {
+  setText('langBtn', t('langBtn'));
+  setText('appTitle', t('appTitle'));
+  setText('appSubtitle', t('appSubtitle'));
+  setText('depWarn', t('depWarn'));
+  setText('addTitle', t('addTitle'));
+  setText('addBtn', t('addBtn'));
+  setText('channelsTitle', t('channelsTitle'));
+  setText('settingsTitle', t('settingsTitle'));
+  setText('proxyLabel', t('proxyLabel'));
+  setText('qualityLabel', t('qualityLabel'));
+  setText('qualityBest', t('qualityBest'));
+  setText('qualityWorst', t('qualityWorst'));
+  setText('settingsHint', t('settingsHint'));
+  setText('saveBtn', t('saveBtn'));
+  setText('ts', t('loading'));
+  var empty = $('emptyText');
+  if (empty) empty.innerHTML = t('empty');
+}
+
+function toggleLang() {
+  lang = lang === 'zh' ? 'en' : 'zh';
+  try {
+    if (window.localStorage) localStorage.setItem(LANG_KEY, lang);
+  } catch (e) {}
+  applyLang();
+  loadAll();
 }
 
 function api(method, url, body, done) {
@@ -540,7 +678,7 @@ function toggleLog(ch) {
 function loadAll() {
   api('GET', '/api/data', null, function (d) {
     if (d.error) {
-      toast('Load failed: ' + d.error, 'err');
+      toast(t('loadFailed') + d.error, 'err');
       return;
     }
     $('depWarn').style.display = d.streamlinkReady ? 'none' : 'block';
@@ -549,7 +687,7 @@ function loadAll() {
 
     var list = $('list');
     if (!d.channels || !d.channels.length) {
-      list.innerHTML = '<div class="empty">No channels yet. Add one first.</div>';
+      list.innerHTML = '<div class="empty" id="emptyText">' + t('empty') + '</div>';
     } else {
       var html = [];
       for (var i = 0; i < d.channels.length; i++) {
@@ -559,40 +697,40 @@ function loadAll() {
         for (var j = 0; j < ch.logs.length; j++) {
           logHtml += '<div class="log-line">' + esc(ch.logs[j]) + '</div>';
         }
-        if (!logHtml) logHtml = '<div class="log-line">No logs yet</div>';
+        if (!logHtml) logHtml = '<div class="log-line">' + t('noLogs') + '</div>';
         var stateBadge = '';
         if (ch.recordingNow) {
-          stateBadge = '<span class="badge b-rec"><span class="dot"></span>Recording</span>';
+          stateBadge = '<span class="badge b-rec"><span class="dot"></span>' + t('recording') + '</span>';
         } else if (ch.enabled) {
-          stateBadge = '<span class="badge b-live"><span class="dot"></span>Listening</span>';
+          stateBadge = '<span class="badge b-live"><span class="dot"></span>' + t('listening') + '</span>';
         } else {
-          stateBadge = '<span class="badge b-off">Stopped</span>';
+          stateBadge = '<span class="badge b-off">' + t('stopped') + '</span>';
         }
         var detail = ch.recordingNow && ch.currentFile
-          ? 'Writing: ' + ch.currentFile
-          : (ch.enabled ? 'Waiting for stream' : 'Recorder stopped');
+          ? t('writing') + ch.currentFile
+          : (ch.enabled ? t('waiting') : t('recorderStopped'));
         var actionBtn = ch.enabled
-          ? '<button class="btn btn-sm btn-red" onclick="stopRec(\'' + name + '\')">Stop</button>'
-          : '<button class="btn btn-sm btn-green" onclick="startRec(\'' + name + '\')">Start</button>';
+          ? '<button class="btn btn-sm btn-red" onclick="stopRec(\'' + name + '\')">' + t('stop') + '</button>'
+          : '<button class="btn btn-sm btn-green" onclick="startRec(\'' + name + '\')">' + t('start') + '</button>';
         html.push(
           '<div class="ch-item"><div class="ch-head"><div class="ch-info">' +
           '<div class="ch-name">' + name + '</div>' +
           '<div class="ch-url" title="' + esc(ch.url) + '">' + esc(ch.url) + '</div>' +
           '<div class="ch-url" title="' + esc(detail) + '">' + esc(detail) + '</div>' +
-          '</div><span class="badge b-unk" id="st_' + name + '">Checking</span>' +
+          '</div><span class="badge b-unk" id="st_' + name + '">' + t('checking') + '</span>' +
           stateBadge +
           '<div class="ch-actions">' +
-          '<button class="btn btn-sm btn-outline" onclick="checkStatus(\'' + name + '\')">Check</button>' +
+          '<button class="btn btn-sm btn-outline" onclick="checkStatus(\'' + name + '\')">' + t('check') + '</button>' +
           actionBtn +
-          '<button class="btn btn-sm btn-ghost" onclick="toggleLog(\'' + name + '\')">Logs</button>' +
-          '<button class="btn btn-sm btn-ghost" onclick="delChannel(\'' + name + '\')">Delete</button>' +
+          '<button class="btn btn-sm btn-ghost" onclick="toggleLog(\'' + name + '\')">' + t('logs') + '</button>' +
+          '<button class="btn btn-sm btn-ghost" onclick="delChannel(\'' + name + '\')">' + t('del') + '</button>' +
           '</div></div><div class="log-wrap" id="log_' + name + '">' + logHtml + '</div></div>'
         );
       }
       list.innerHTML = html.join('');
       for (var k = 0; k < d.channels.length; k++) checkStatus(d.channels[k].name);
     }
-    $('ts').textContent = 'Last refresh: ' + new Date().toLocaleTimeString();
+    $('ts').textContent = t('lastRefresh') + new Date().toLocaleTimeString();
   });
 }
 
@@ -600,17 +738,17 @@ function checkStatus(ch) {
   var el = $('st_' + ch);
   if (!el) return;
   el.className = 'badge b-unk';
-  el.textContent = 'Checking';
+  el.textContent = t('checking');
   api('GET', '/api/channels/' + encodeURIComponent(ch) + '/status', null, function (d) {
     if (d.status === 'live') {
       el.className = 'badge b-live';
-      el.innerHTML = '<span class="dot"></span>Live';
+      el.innerHTML = '<span class="dot"></span>' + t('live');
     } else if (d.status === 'offline') {
       el.className = 'badge b-off';
-      el.textContent = 'Offline';
+      el.textContent = t('offline');
     } else {
       el.className = 'badge b-unk';
-      el.textContent = 'Unknown';
+      el.textContent = t('unknown');
     }
   });
 }
@@ -624,15 +762,15 @@ function addChannel() {
       return;
     }
     $('newUrl').value = '';
-    toast('Added ' + res.name);
+    toast(t('added') + res.name);
     loadAll();
   });
 }
 
 function delChannel(ch) {
-  if (!confirm('Delete ' + ch + '?')) return;
+  if (!confirm(t('deleteConfirm') + ch + '?')) return;
   api('DELETE', '/api/channels/' + encodeURIComponent(ch), null, function () {
-    toast('Deleted ' + ch);
+    toast(t('deleted') + ch);
     loadAll();
   });
 }
@@ -643,15 +781,15 @@ function startRec(ch) {
       toast(res.error, 'err');
       return;
     }
-    toast('Started ' + ch);
+    toast(t('started') + ch);
     refreshPage();
   });
 }
 
 function stopRec(ch) {
-  toast('Stopping ' + ch + '...');
+  toast(t('stopping') + ch + '...');
   api('POST', '/api/channels/' + encodeURIComponent(ch) + '/stop', null, function () {
-    toast('Stopped ' + ch);
+    toast(t('stoppedToast') + ch);
     refreshPage();
   });
 }
@@ -664,7 +802,7 @@ function refreshPage() {
 function saveSettings() {
   api('POST', '/api/settings', {proxy: $('proxy').value.replace(/^\s+|\s+$/g, ''), quality: $('quality').value}, function (res) {
     if (res.error) toast(res.error, 'err');
-    else toast('Settings saved');
+    else toast(t('settingsSaved'));
   });
 }
 
@@ -672,6 +810,7 @@ $('newUrl').onkeydown = function (e) {
   e = e || window.event;
   if (e.keyCode === 13 || e.key === 'Enter') addChannel();
 };
+applyLang();
 loadAll();
 setInterval(loadAll, 30000);
 </script>
