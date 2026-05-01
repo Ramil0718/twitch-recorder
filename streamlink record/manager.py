@@ -371,8 +371,12 @@ def kill_process_tree(proc):
 def stop_recording(name):
     enabled_channels.discard(name)
     proc = procs.pop(name, None)
+    out_file = current_files.get(name)
     kill_process_tree(proc)
     current_files.pop(name, None)
+    if out_file and os.path.exists(out_file):
+        queue_conversion(name, out_file)
+        log_append(name, "已停止录制，最后一段已加入转码队列")
     log_append(name, "手动停止录制")
 
 
