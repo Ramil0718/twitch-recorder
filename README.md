@@ -1,5 +1,5 @@
 # twitch-recorder
-need *__streamlink__* first  
+need *__[ffmpeg](https://ffmpeg.org/)__* first  
 then press the file *__"start_manager.md"__* to start the recording  
 maybe need to log in twitch
 
