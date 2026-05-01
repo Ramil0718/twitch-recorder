@@ -1,2 +1,4 @@
 Flask>=3.1,<4
 streamlink>=8,<9
+# External runtime dependency:
+# ffmpeg.exe (place next to manager.py or set its path in the web UI)
