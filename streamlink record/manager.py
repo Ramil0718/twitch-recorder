@@ -1,9 +1,10 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import importlib.util
 import json
 import os
+import queue
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(APP_DIR, "channels.json")
 RECORD_DIR = os.path.join(APP_DIR, "recordings")
 PORT = 8888
+SEGMENT_DURATION = "01:00:00"
 
 os.makedirs(RECORD_DIR, exist_ok=True)
 
@@ -34,6 +36,9 @@ procs = {}
 enabled_channels = set()
 current_files = {}
 logs = {}
+conversion_queue = queue.Queue()
+conversion_worker_started = False
+conversion_worker_lock = threading.Lock()
 
 
 def streamlink_base_cmd():
@@ -65,8 +70,20 @@ def load_data():
             else:
                 normalized.append(ch)
         d["channels"] = normalized
+        d.setdefault("proxy", "")
+        d.setdefault("quality", "best")
+        d.setdefault("output_format", "mp4")
+        d.setdefault("ffmpeg_path", "")
+        d.setdefault("keep_raw", False)
         return d
-    return {"channels": [], "proxy": "", "quality": "best"}
+    return {
+        "channels": [],
+        "proxy": "",
+        "quality": "best",
+        "output_format": "mp4",
+        "ffmpeg_path": "",
+        "keep_raw": False,
+    }
 
 
 def save_data():
@@ -109,6 +126,39 @@ def get_channel_info(name):
     return next((c for c in data["channels"] if c["name"] == name), None)
 
 
+def normalize_output_format(value):
+    value = (value or "mp4").strip().lower()
+    if value not in ("ts", "mp4", "mkv", "flv"):
+        return "mp4"
+    return value
+
+
+def ffmpeg_base_cmd():
+    configured = (data.get("ffmpeg_path", "") or "").strip()
+    candidates = []
+    if configured:
+        candidates.append(configured)
+        if not os.path.isabs(configured) and os.path.sep not in configured:
+            found = shutil.which(configured)
+            if found:
+                candidates.insert(0, found)
+    candidates.append(os.path.join(APP_DIR, "ffmpeg.exe"))
+    found = shutil.which("ffmpeg")
+    if found:
+        candidates.append(found)
+    found = shutil.which("ffmpeg.exe")
+    if found:
+        candidates.append(found)
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if os.path.isdir(candidate):
+            candidate = os.path.join(candidate, "ffmpeg.exe")
+        if os.path.exists(candidate):
+            return [candidate]
+    return None
+
+
 def build_cmd(url, proxy, quality, out_file):
     base_cmd = streamlink_base_cmd()
     if not base_cmd:
@@ -119,6 +169,7 @@ def build_cmd(url, proxy, quality, out_file):
     cmd += [
         "--retry-streams", "30",
         "--retry-max", "0",
+        "--stream-segmented-duration", SEGMENT_DURATION,
         url,
         quality,
         "-o", out_file,
@@ -126,12 +177,103 @@ def build_cmd(url, proxy, quality, out_file):
     return cmd
 
 
+def build_ffmpeg_cmd(src_file, dst_file):
+    base_cmd = ffmpeg_base_cmd()
+    if not base_cmd:
+        raise FileNotFoundError("ffmpeg is not installed")
+    output_format = normalize_output_format(os.path.splitext(dst_file)[1].lstrip("."))
+    cmd = list(base_cmd)
+    cmd += ["-y", "-i", src_file, "-c", "copy"]
+    if output_format == "mp4":
+        cmd += ["-movflags", "+faststart"]
+    cmd += [dst_file]
+    return cmd
+
+
+def convert_segment(name, src_file, output_format, keep_raw):
+    output_format = normalize_output_format(output_format)
+    if output_format == "ts":
+        return
+    if not os.path.exists(src_file):
+        log_append(name, f"杞爜璺宠繃锛氭簮鏂囦欢涓嶅瓨鍦?{src_file}")
+        return
+
+    dst_file = os.path.splitext(src_file)[0] + "." + output_format
+    if os.path.exists(dst_file):
+        try:
+            os.remove(dst_file)
+        except Exception:
+            pass
+
+    try:
+        cmd = build_ffmpeg_cmd(src_file, dst_file)
+    except FileNotFoundError:
+        log_append(name, "杞爜澶辫触锛氭湭鎵惧埌 ffmpeg锛岃鎶?ffmpeg.exe 鏀惧埌鑴氭湰鐩綍锛屾垨鍦ㄨ缃噷濉啓璺緞")
+        return
+
+    log_append(name, f"寮€濮嬭浆鐮佷负 {output_format.upper()}...")
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if proc.returncode == 0:
+            log_append(name, f"转码完成：{dst_file}")
+            if not keep_raw:
+                try:
+                    os.remove(src_file)
+                except Exception as e:
+                    log_append(name, f"删除原始文件失败：{e}")
+        else:
+            output = (proc.stdout or "").strip()
+            if output:
+                for line in output.splitlines()[-20:]:
+                    log_append(name, line)
+            log_append(name, f"转码失败：ffmpeg 返回码 {proc.returncode}")
+    except Exception as e:
+        log_append(name, f"转码异常：{e}")
+
+
+def conversion_worker():
+    while True:
+        item = conversion_queue.get()
+        try:
+            if item is None:
+                return
+            name, src_file, output_format, keep_raw = item
+            convert_segment(name, src_file, output_format, keep_raw)
+        finally:
+            conversion_queue.task_done()
+
+
+def start_conversion_worker():
+    global conversion_worker_started
+    with conversion_worker_lock:
+        if conversion_worker_started:
+            return
+        threading.Thread(target=conversion_worker, daemon=True).start()
+        conversion_worker_started = True
+
+
+def queue_conversion(name, src_file):
+    output_format = normalize_output_format(data.get("output_format", "mp4"))
+    if output_format == "ts":
+        return
+    keep_raw = bool(data.get("keep_raw", False))
+    conversion_queue.put((name, src_file, output_format, keep_raw))
+
+
 def record_worker(name):
-    log_append(name, f"录制任务已启动，等待 {name} 开播...")
+    log_append(name, f"褰曞埗浠诲姟宸插惎鍔紝绛夊緟 {name} 寮€鎾?.. 姣忔鏈€闀?{SEGMENT_DURATION}")
     while name in enabled_channels:
+        segment_finished = False
         ch_info = get_channel_info(name)
         if not ch_info:
-            log_append(name, "错误：找不到频道信息，任务已停止")
+            log_append(name, "閿欒锛氭壘涓嶅埌棰戦亾淇℃伅锛屼换鍔″凡鍋滄")
             enabled_channels.discard(name)
             procs.pop(name, None)
             current_files.pop(name, None)
@@ -145,7 +287,7 @@ def record_worker(name):
 
         try:
             cmd = build_cmd(ch_info["url"], proxy, quality, out_file)
-            log_append(name, "检测直播状态...")
+            log_append(name, "妫€娴嬬洿鎾姸鎬?..")
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -166,9 +308,10 @@ def record_worker(name):
                 line = line.strip()
                 if line:
                     log_append(name, line)
-            proc.wait()
+            exit_code = proc.wait()
+            segment_finished = exit_code == 0
         except FileNotFoundError:
-            log_append(name, "错误：找不到 Streamlink。请运行 install_deps.cmd 或执行 python -m pip install streamlink")
+            log_append(name, "閿欒锛氭壘涓嶅埌 Streamlink銆傝杩愯 install_deps.cmd 鎴栨墽琛?python -m pip install streamlink")
             enabled_channels.discard(name)
             procs.pop(name, None)
             current_files.pop(name, None)
@@ -180,7 +323,12 @@ def record_worker(name):
         if name not in enabled_channels:
             break
 
-        log_append(name, "本次检测/录制结束，60 秒后重新检测...")
+        if segment_finished:
+            queue_conversion(name, out_file)
+            log_append(name, "鍒嗘瀹屾垚锛岀珛鍗冲紑濮嬩笅涓€娈?..")
+            continue
+
+        log_append(name, "鏈妫€娴?褰曞埗缁撴潫锛?0 绉掑悗閲嶆柊妫€娴?..")
         for _ in range(60):
             if name not in enabled_channels:
                 break
@@ -225,7 +373,7 @@ def stop_recording(name):
     proc = procs.pop(name, None)
     kill_process_tree(proc)
     current_files.pop(name, None)
-    log_append(name, "已手动停止录制")
+    log_append(name, "手动停止录制")
 
 
 def start_all_recordings():
@@ -319,7 +467,11 @@ def api_data():
         channels=result,
         proxy=data.get("proxy", ""),
         quality=data.get("quality", "best"),
+        outputFormat=normalize_output_format(data.get("output_format", "mp4")),
+        ffmpegPath=data.get("ffmpeg_path", ""),
+        keepRaw=bool(data.get("keep_raw", False)),
         streamlinkReady=streamlink_base_cmd() is not None,
+        ffmpegReady=ffmpeg_base_cmd() is not None,
     )
 
 
@@ -328,7 +480,7 @@ def api_add():
     body = request.get_json(force=True, silent=True) or {}
     url = body.get("url", "").strip()
     if not url:
-        return jsonify(error="请输入直播间网址"), 400
+        return jsonify(error="璇疯緭鍏ョ洿鎾棿缃戝潃"), 400
     if not url.startswith("http"):
         url = "https://" + url
     name = extract_name_from_url(url)
@@ -382,6 +534,12 @@ def api_settings():
         data["proxy"] = body["proxy"].strip()
     if "quality" in body:
         data["quality"] = body["quality"].strip() or "best"
+    if "outputFormat" in body:
+        data["output_format"] = normalize_output_format(body["outputFormat"])
+    if "ffmpegPath" in body:
+        data["ffmpeg_path"] = body["ffmpegPath"].strip()
+    if "keepRaw" in body:
+        data["keep_raw"] = bool(body["keepRaw"])
     save_data()
     return jsonify(ok=True)
 
@@ -432,6 +590,8 @@ select option{background:#18181b}
 .log-line{font-family:Consolas,monospace;font-size:11px;color:#adadb8;padding:2px 14px;line-height:1.7}
 .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .settings-grid label{font-size:11px;color:#adadb8;display:block;margin-bottom:5px}
+.check-row{margin-top:12px;font-size:12px;color:#adadb8;display:flex;align-items:center;gap:8px}
+.check-row input{margin:0}
 .hint{font-size:11px;color:#5c5c7a;margin-top:8px}
 .empty{text-align:center;color:#5c5c7a;padding:28px;font-size:13px}
 .toast{position:fixed;bottom:22px;right:22px;background:#18181b;border:1px solid #2d2d35;border-radius:8px;padding:11px 18px;font-size:13px;opacity:0;transition:opacity .25s;pointer-events:none}
@@ -445,45 +605,58 @@ select option{background:#18181b}
 </head>
 <body>
 <header>
-  <h1 id="appTitle">Twitch 直播录制管理</h1>
-  <span id="appSubtitle">自动检测开播 · 一键录制</span>
+  <h1 id="appTitle">Twitch 鐩存挱褰曞埗绠＄悊</h1>
+  <span id="appSubtitle">?????? ? ????</span>
   <button class="lang-toggle" id="langBtn" onclick="toggleLang()">English</button>
 </header>
 <div class="wrap">
-  <div class="card warning" id="depWarn">未检测到 Streamlink。请在服务器运行 install_deps.cmd，或执行 python -m pip install streamlink。</div>
+  <div class="card warning" id="depWarn">???? Streamlink???????? install_deps.cmd???? python -m pip install streamlink?</div>
   <div class="card">
-    <div class="card-title" id="addTitle">添加直播间</div>
+    <div class="card-title" id="addTitle">?????</div>
     <div class="row">
       <input class="grow" type="text" id="newUrl" placeholder="https://www.twitch.tv/spicyuuu">
-      <button class="btn btn-purple" id="addBtn" onclick="addChannel()">添加</button>
+      <button class="btn btn-purple" id="addBtn" onclick="addChannel()">娣诲姞</button>
     </div>
   </div>
   <div class="card">
-    <div class="card-title" id="channelsTitle">频道列表</div>
-    <div class="refresh-ts" id="ts">加载中...</div>
-    <div id="list"><div class="empty" id="emptyText">暂无频道，请先添加</div></div>
+    <div class="card-title" id="channelsTitle">棰戦亾鍒楄〃</div>
+    <div class="refresh-ts" id="ts">鍔犺浇涓?..</div>
+    <div id="list"><div class="empty" id="emptyText">?????????</div></div>
   </div>
   <div class="card">
-    <div class="card-title" id="settingsTitle">设置</div>
+    <div class="card-title" id="settingsTitle">璁剧疆</div>
     <div class="settings-grid">
       <div>
-        <label id="proxyLabel">代理地址（可选）</label>
+        <label id="outputFormatLabel">閷勫埗鏍煎紡</label>
+        <select id="outputFormat" style="width:100%">
+          <option value="mp4" id="outputMp4">MP4</option>
+          <option value="mkv" id="outputMkv">MKV</option>
+          <option value="flv" id="outputFlv">FLV</option>
+          <option value="ts" id="outputTs">TS</option>
+        </select>
+      </div>
+      <div>
+        <label id="ffmpegPathLabel">FFmpeg ???????</label>
+        <input type="text" id="ffmpegPath" placeholder="D:\\streamlink record\\ffmpeg.exe" style="width:100%">
+      </div>
+      <div>
+        <label id="proxyLabel">浠ｇ悊鍦板潃锛堝彲閫夛級</label>
         <input type="text" id="proxy" placeholder="http://127.0.0.1:7890" style="width:100%">
       </div>
       <div>
-        <label id="qualityLabel">录制画质</label>
+        <label id="qualityLabel">褰曞埗鐢昏川</label>
         <select id="quality" style="width:100%">
-          <option value="best" id="qualityBest">最高 best</option>
+          <option value="best" id="qualityBest">鏈€楂?best</option>
           <option value="1080p60">1080p60</option>
           <option value="720p60">720p60</option>
           <option value="720p">720p</option>
           <option value="480p">480p</option>
-          <option value="worst" id="qualityWorst">最低 worst</option>
+          <option value="worst" id="qualityWorst">鏈€浣?worst</option>
         </select>
       </div>
     </div>
-    <p class="hint" id="settingsHint">修改设置后点击保存；正在录制的频道下次重启任务后生效。</p>
-    <div style="margin-top:12px"><button class="btn btn-purple btn-sm" id="saveBtn" onclick="saveSettings()">保存设置</button></div>
+    <p class="hint" id="settingsHint">???????????????????????????????????? 1 ???????</p>
+    <div style="margin-top:12px"><button class="btn btn-purple btn-sm" id="saveBtn" onclick="saveSettings()">淇濆瓨璁剧疆</button></div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
@@ -516,7 +689,14 @@ var I18N = {
     qualityLabel: '录制画质',
     qualityBest: '最高 best',
     qualityWorst: '最低 worst',
-    settingsHint: '修改设置后点击保存；正在录制的频道下次重启任务后生效。',
+    outputFormatLabel: '录制格式',
+    outputTs: 'TS',
+    outputMp4: 'MP4',
+    outputMkv: 'MKV',
+    outputFlv: 'FLV',
+    ffmpegPathLabel: 'FFmpeg 路径（可留空）',
+    keepRawLabel: '保留原始 TS 文件',
+    settingsHint: '修改设置后点击保存；正在录制的频道会在下一次重启后生效。录制文件会按最长 1 小时自动分段。',
     saveBtn: '保存设置',
     loadFailed: '加载失败：',
     noLogs: '暂无日志',
@@ -527,7 +707,7 @@ var I18N = {
     waiting: '等待开播',
     recorderStopped: '录制器已停止',
     checking: '检测中',
-    check: '检测',
+    check: '检查',
     start: 'Start',
     stop: 'Stop',
     logs: '日志',
@@ -537,7 +717,7 @@ var I18N = {
     unknown: '未知',
     lastRefresh: '上次刷新：',
     added: '已添加 ',
-    deleteConfirm: '确定删除 ',
+    deleteConfirm: '确认删除 ',
     deleted: '已删除 ',
     started: '已启动 ',
     stopping: '正在停止 ',
@@ -559,7 +739,14 @@ var I18N = {
     qualityLabel: 'Recording Quality',
     qualityBest: 'Best',
     qualityWorst: 'Worst',
-    settingsHint: 'Click Save after changing settings. Active recorders use new settings after the next restart.',
+    outputFormatLabel: 'Output Format',
+    outputTs: 'TS',
+    outputMp4: 'MP4',
+    outputMkv: 'MKV',
+    outputFlv: 'FLV',
+    ffmpegPathLabel: 'FFmpeg Path (optional)',
+    keepRawLabel: 'Keep raw TS files',
+    settingsHint: 'Click Save after changing settings. Active recorders use new settings after the next restart. Recordings are split into files of up to 1 hour.',
     saveBtn: 'Save Settings',
     loadFailed: 'Load failed: ',
     noLogs: 'No logs yet',
@@ -599,6 +786,7 @@ function setText(id, text) {
 }
 
 function applyLang() {
+  document.title = t('appTitle');
   setText('langBtn', t('langBtn'));
   setText('appTitle', t('appTitle'));
   setText('appSubtitle', t('appSubtitle'));
@@ -607,10 +795,17 @@ function applyLang() {
   setText('addBtn', t('addBtn'));
   setText('channelsTitle', t('channelsTitle'));
   setText('settingsTitle', t('settingsTitle'));
+  setText('outputFormatLabel', t('outputFormatLabel'));
+  setText('outputTs', t('outputTs'));
+  setText('outputMp4', t('outputMp4'));
+  setText('outputMkv', t('outputMkv'));
+  setText('outputFlv', t('outputFlv'));
+  setText('ffmpegPathLabel', t('ffmpegPathLabel'));
   setText('proxyLabel', t('proxyLabel'));
   setText('qualityLabel', t('qualityLabel'));
   setText('qualityBest', t('qualityBest'));
   setText('qualityWorst', t('qualityWorst'));
+  setText('keepRawLabel', t('keepRawLabel'));
   setText('settingsHint', t('settingsHint'));
   setText('saveBtn', t('saveBtn'));
   setText('ts', t('loading'));
@@ -684,6 +879,8 @@ function loadAll() {
     $('depWarn').style.display = d.streamlinkReady ? 'none' : 'block';
     $('proxy').value = d.proxy || '';
     if (d.quality) $('quality').value = d.quality;
+    if (d.outputFormat) $('outputFormat').value = d.outputFormat;
+    $('ffmpegPath').value = d.ffmpegPath || '';
 
     var list = $('list');
     if (!d.channels || !d.channels.length) {
@@ -800,7 +997,12 @@ function refreshPage() {
 }
 
 function saveSettings() {
-  api('POST', '/api/settings', {proxy: $('proxy').value.replace(/^\s+|\s+$/g, ''), quality: $('quality').value}, function (res) {
+  api('POST', '/api/settings', {
+    proxy: $('proxy').value.replace(/^\s+|\s+$/g, ''),
+    quality: $('quality').value,
+    outputFormat: $('outputFormat').value,
+    ffmpegPath: $('ffmpegPath').value.replace(/^\s+|\s+$/g, '')
+  }, function (res) {
     if (res.error) toast(res.error, 'err');
     else toast(t('settingsSaved'));
   });
@@ -845,6 +1047,8 @@ Press Ctrl+C to stop
             print("Could not open browser automatically:", e)
             print("Please open:", url)
 
+    start_conversion_worker()
     start_all_recordings()
     threading.Thread(target=open_default_browser, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+
