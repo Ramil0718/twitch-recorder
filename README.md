@@ -1,6 +1,6 @@
 # Twitch Recorder Manager (Streamlink + FFmpeg)
 
-[简体中文](https://github.com/Ramil0718/twitch-recorder/blob/main/README.zh.md)
+[简体中文](https://github.com/Ramil0718/twitch-recorder/blob/main/README.zh.md)  
 A small **Twitch auto-recording** tool with a web control panel (Flask). It uses [Streamlink](https://streamlink.github.io/) to fetch the stream and optionally uses FFmpeg to remux recorded segments (lossless `-c copy`).
 
 - Web UI port: `8888`
