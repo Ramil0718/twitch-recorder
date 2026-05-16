@@ -22,11 +22,7 @@ video_split_strategies:
   max_file_size: 0
 cookies:
   www.twitch.tv: |-
-    auth-token=8ilumemrj6g3pvuz6mnnhkg7rbb1re; domain=.twitch.tv; path=/; secure; httponly
-    server_session_id=68d1d0c803044a9890977bda3b2c6db0; domain=.twitch.tv; path=/; secure; samesite=none
-    unique_id=EEDPozbagXcWfKt6CAHMc7qu1Hu1BPDQ; expires=Sat, 29 May 2027 15:08:26 GMT; domain=.twitch.tv; path=/; secure; samesite=none
-    unique_id_durable=EEDPozbagXcWfKt6CAHMc7qu1Hu1BPDQ; expires=Sat, 29 May 2027 15:08:26 GMT; domain=.twitch.tv; path=/; secure; samesite=none; httponly
-    twitch.lohp.countryCode=US; domain=.twitch.tv; path=/; expires=Mon, 24 May 2027 15:08:26 GMT;
+    ;
 on_record_finished:
   convert_to_mp4: true
   delete_flv_after_convert: true
